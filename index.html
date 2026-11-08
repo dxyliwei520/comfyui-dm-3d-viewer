@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DM 3D 查看器 · ComfyUI 资产</title>
+<style>
+  :root{--bg:#0e1013;--panel:#161a20;--panel2:#1d232b;--line:#2a323d;--txt:#e6edf3;--dim:#8b97a6;--acc:#3bd6a3;--acc2:#5b8cff}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
+  #app{display:flex;height:100%}
+  /* 侧栏 */
+  #side{width:288px;flex:0 0 288px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column}
+  #side .hd{padding:12px 14px 10px;border-bottom:1px solid var(--line)}
+  #side h1{margin:0 0 2px;font-size:15px;font-weight:600;letter-spacing:.3px}
+  #side h1 em{color:var(--acc);font-style:normal}
+  #side .sub{color:var(--dim);font-size:11.5px}
+  #side .bar{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  #side input{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:8px;padding:6px 9px;font:inherit;font-size:12.5px;outline:none}
+  #side input:focus{border-color:var(--acc2)}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
+    padding:6px 10px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap;transition:.15s}
+  .btn:hover{border-color:#3d4756;background:#232b35}
+  .btn.on{border-color:var(--acc);color:var(--acc);background:rgba(59,214,163,.1)}
+  #list{flex:1;overflow:auto;padding:6px}
+  .item{padding:8px 10px;border-radius:9px;cursor:pointer;border:1px solid transparent}
+  .item:hover{background:var(--panel2);border-color:var(--line)}
+  .item.sel{background:rgba(91,140,255,.14);border-color:#39518a}
+  .item .n{display:flex;align-items:center;gap:6px;font-size:12.8px;word-break:break-all}
+  .tag{font-size:10px;padding:1px 5px;border-radius:4px;background:#22303f;color:#9fc6ff;flex:0 0 auto}
+  .tag.obj{background:#2b2a1e;color:#e5d48a}.tag.ply{background:#1e2b28;color:#9fe0c6}
+  .tag.stl{background:#2b1e26;color:#e6a5c0}.tag.gltf{background:#1e2633;color:#a9c6ff}
+  .item .m{color:var(--dim);font-size:11px;margin-top:2px;display:flex;gap:8px}
+  #foot{padding:8px 12px;border-top:1px solid var(--line);color:var(--dim);font-size:11px}
+  /* 主区 */
+  #main{position:relative;flex:1;min-width:0}
+  canvas{display:block;width:100%;height:100%}
+  #tools{position:absolute;top:12px;right:12px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:70%}
+  #stats{position:absolute;left:12px;bottom:12px;background:rgba(14,16,19,.72);border:1px solid var(--line);
+    border-radius:10px;padding:8px 11px;font-size:12px;color:var(--dim);backdrop-filter:blur(6px);max-width:min(560px,70%)}
+  #stats b{color:var(--txt);font-weight:600}
+  #stats .row{display:flex;gap:14px;flex-wrap:wrap}
+  #hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:var(--dim);pointer-events:none}
+  #hint b{display:block;color:var(--txt);font-size:16px;margin-bottom:6px}
+  #toast{position:absolute;left:50%;top:18px;transform:translateX(-50%);background:#2a1f24;border:1px solid #6b2f3f;
+    color:#ffc7d3;padding:8px 14px;border-radius:9px;font-size:12.5px;display:none;max-width:80%}
+  #drop{position:absolute;inset:0;border:2px dashed var(--acc);background:rgba(59,214,163,.08);
+    display:none;align-items:center;justify-content:center;font-size:16px;color:var(--acc)}
+  #drop.on{display:flex}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #333c4a;border-top-color:var(--acc);
+    border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="hd">
+      <h1><em>DM</em> 3D 查看器</h1>
+      <div class="sub" id="roots">正在扫描 ComfyUI 输出目录…</div>
+    </div>
+    <div class="bar">
+      <input id="q" placeholder="过滤文件名…">
+      <button class="btn" id="refresh" title="重新扫描">刷新</button>
+    </div>
+    <div id="list"></div>
+    <div id="foot">点击文件查看 · 也可把文件直接拖到右边</div>
+  </aside>
+  <main id="main">
+    <div id="tools">
+      <button class="btn" id="btnWire" title="W">线框</button>
+      <button class="btn on" id="btnGrid" title="G">网格</button>
+      <button class="btn" id="btnRot" title="空格">自动旋转</button>
+      <button class="btn" id="btnReset" title="R">重置视角</button>
+      <button class="btn" id="btnShot" title="截图 PNG">截图</button>
+      <button class="btn on" id="btnMat" title="针对 metallic=1 的假金属做兜底">材质修正</button>
+      <button class="btn" id="btnHead" title="H">头部特写</button>
+      <button class="btn" id="btnBg">背景</button>
+      <button class="btn" id="btnFull">全屏</button>
+    </div>
+    <div id="hint"><b>选一个 3D 资产</b>左边是 ComfyUI 的输出；也可以把 .glb / .obj / .ply / .stl 拖进来</div>
+    <div id="stats" style="display:none"></div>
+    <div id="toast"></div>
+    <div id="drop">松开，直接看</div>
+  </main>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"./three/build/three.module.min.js","three/addons/":"./three/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const $ = s => document.querySelector(s);
+const main = $('#main');
+const toastEl = $('#toast');
+
+/* ---------------- 渲染器 / 场景 ---------------- */
+const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(main.clientWidth, main.clientHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+main.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const BGS = ['#0e1013', '#20262e', '#3a4048', '#f0f2f5'];
+let bgIdx = 0;
+scene.background = new THREE.Color(BGS[bgIdx]);
+
+const camera = new THREE.PerspectiveCamera(45, main.clientWidth / main.clientHeight, 0.01, 5000);
+camera.position.set(1.6, 1.1, 2.0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.screenSpacePanning = true;
+
+// 灯光：三点 + 环境
+const hemi = new THREE.HemisphereLight(0xffffff, 0x2a3240, 1.1); scene.add(hemi);
+const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 6, 4); scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fc0ff, 0.9); fill.position.set(-4, 2, -3); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 1.2); rim.position.set(0, -5, -4); scene.add(rim);
+scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+// 网格 + 地面
+const grid = new THREE.GridHelper(10, 20, 0x3a4654, 0x232b35);
+grid.material.transparent = true; grid.material.opacity = 0.75;
+scene.add(grid);
+const axes = new THREE.AxesHelper(0.6); axes.visible = false; scene.add(axes);
+
+// 模型容器
+const root = new THREE.Group(); scene.add(root);
+
+/* ---------------- 加载器 ---------------- */
+const draco = new DRACOLoader();
+draco.setDecoderPath('./three/examples/jsm/libs/draco/');
+const gltfLoader = new GLTFLoader().setDRACOLoader(draco);
+const objLoader = new OBJLoader();
+const plyLoader = new PLYLoader();
+const stlLoader = new STLLoader();
+
+function clearRoot(){
+  root.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      ms.forEach(m => { for (const k of Object.keys(m)) { const v = m[k]; if (v && v.isTexture) v.dispose(); } m.dispose(); });
+    }
+  });
+  while (root.children.length) root.remove(root.children[0]);
+}
+
+function countStats(obj){
+  let verts = 0, tris = 0, mats = new Set(), meshes = 0;
+  obj.traverse(o => {
+    if (!o.isMesh && !o.isPoints) return;
+    meshes++;
+    const g = o.geometry;
+    const pos = g?.attributes?.position;
+    if (pos) verts += pos.count;
+    if (g?.index) tris += g.index.count / 3;
+    else if (pos && o.isMesh) tris += pos.count / 3;
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    ms.forEach(m => m && mats.add(m.uuid));
+  });
+  return {verts, tris: Math.round(tris), mats: mats.size, meshes};
+}
+
+function frameObject(obj, pad = 1.35){
+  const box = new THREE.Box3().setFromObject(obj);
+  if (box.isEmpty()) return null;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const fov = camera.fov * Math.PI / 180;
+  const dist = (maxDim / (2 * Math.tan(fov / 2))) * pad;
+  const dir = new THREE.Vector3(0.75, 0.55, 1).normalize();
+  camera.position.copy(center).addScaledVector(dir, dist);
+  camera.near = Math.max(dist / 1000, 0.001);
+  camera.far = dist * 100;
+  camera.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+  // 网格贴地
+  grid.position.set(center.x, box.min.y - maxDim * 0.002, center.z);
+  grid.scale.setScalar(Math.max(maxDim / 10, 0.15));
+  return {box, size, center};
+}
+
+
+/* ================= 渲染质量三件套（2026-11-08 加） =================
+   问题：这批 ComfyUI 导出的 glb 里，材质普遍是 metallic=1.0 / roughness=1.0
+        且没有 metalnessMap —— 这是"导出默认值"，不是真的金属。
+   three.js 的 PBR 遇到 metalness=1 又没有环境贴图时：漫反射几乎为 0，
+   只剩高光 → 皮肤变成"发亮塑料 + 死黑阴影"，脸看着更吓人。
+   解法：① 加一张程序化环境贴图(IBL)  ② 自动兜底把这种"假金属"降下来
+        ③ 提供 toggle 随时对比"原样 vs 修正"。
+=================================================================== */
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+scene.environment = envRT.texture;         // 只给 PBR 反射用，不改变背景色
+scene.environmentIntensity = 1.0;
+
+let fixMat = true;   // 材质修正默认开（针对上面那种假金属）
+const matCache = new WeakMap();
+
+function isFakeMetal(m) {
+  if (!m || !('metalness' in m)) return false;
+  const noMap = !m.metalnessMap;
+  return noMap && m.metalness >= 0.9;
+}
+
+function applyMatFix(obj) {
+  obj.traverse(o => {
+    if (!o.isMesh && !o.isPoints) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    ms.forEach(m => {
+      if (!m) return;
+      if (!matCache.has(m)) matCache.set(m, { metalness: m.metalness, roughness: m.roughness });
+      const orig = matCache.get(m);
+      if (fixMat && isFakeMetal(m)) {
+        m.metalness = 0.0;
+        m.roughness = Math.min(0.95, Math.max(0.62, orig.roughness ?? 0.9));
+        m.envMapIntensity = 0.85;
+      } else {
+        if ('metalness' in m) m.metalness = orig.metalness;
+        if ('roughness' in m) m.roughness = orig.roughness;
+      }
+      m.needsUpdate = true;
+    });
+  });
+}
+
+// 头部特写：框住包围盒顶部 22%
+function frameHead(){
+  if (!root.children.length) return;
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const headY = box.max.y - size.y * 0.12;
+  const head = new THREE.Box3(
+    new THREE.Vector3(center.x - size.x * 0.22, headY - size.y * 0.10, center.z - size.z * 0.22),
+    new THREE.Vector3(center.x + size.x * 0.22, box.max.y, center.z + size.z * 0.22)
+  );
+  const hSize = head.getSize(new THREE.Vector3());
+  const hCenter = head.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(hSize.x, hSize.y, hSize.z) || 0.1;
+  const fov = camera.fov * Math.PI / 180;
+  const dist = (maxDim / (2 * Math.tan(fov / 2))) * 1.5;
+  camera.position.copy(hCenter).add(new THREE.Vector3(0.35, 0.12, 1).normalize().multiplyScalar(dist));
+  controls.target.copy(hCenter);
+  camera.near = Math.max(dist / 500, 0.0005);
+  camera.far = dist * 200;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+/* ---------------- UI 状态 ---------------- */
+let current = null;          // {name, path} 或 {name, file}
+const statsEl = $('#stats');
+const hintEl = $('#hint');
+
+function toast(msg, ms = 6000){
+  toastEl.textContent = msg; toastEl.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.style.display = 'none', ms);
+}
+
+function showStats(info, extra){
+  const f = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+' M' : n >= 1e3 ? (n/1e3).toFixed(1)+' k' : String(n);
+  const rows = [
+    `<span><b>${info.name}</b></span>`,
+    `<span>顶点 <b>${f(info.verts)}</b></span>`,
+    `<span>三角面 <b>${f(info.tris)}</b></span>`,
+    `<span>材质 <b>${info.mats}</b></span>`,
+    `<span>网格 <b>${info.meshes}</b></span>`,
+  ];
+  if (extra?.size) rows.push(`<span>尺寸 <b>${extra.size}</b></span>`);
+  if (extra?.fileSize) rows.push(`<span>文件 <b>${extra.fileSize}</b></span>`);
+  if (extra?.ms) rows.push(`<span>耗时 <b>${extra.ms} ms</b></span>`);
+  statsEl.innerHTML = `<div class="row">${rows.join('')}</div>`;
+  statsEl.style.display = 'block';
+}
+
+const fmtSize = (b) => b >= 1048576 ? (b/1048576).toFixed(1)+' MB' : (b/1024).toFixed(0)+' KB';
+const fmtTime = (t) => { const d = new Date(t*1000), n = new Date();
+  const same = d.toDateString() === n.toDateString();
+  return (same ? '' : (d.getMonth()+1) + '/' + d.getDate() + ' ') +
+    String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
+
+/* ---------------- 加载 ---------------- */
+async function loadPath(item){
+  current = item;
+  markSelected(item.path);
+  hintEl.style.display = 'none';
+  const t0 = performance.now();
+  const url = '/api/file?p=' + encodeURIComponent(item.path);
+  const ext = (item.name.split('.').pop() || '').toLowerCase();
+  statsEl.style.display = 'block';
+  statsEl.innerHTML = `<span class="spin"></span> 正在加载 ${item.name}（${fmtSize(item.size)}）…`;
+  try {
+    const obj = await loadByExt(ext, url);
+    clearRoot();
+    root.add(obj);
+    applyMatFix(obj);
+    const framed = frameObject(obj);
+    const st = countStats(obj);
+    showStats({...st, name:item.name}, {
+      size: framed ? `${framed.size.x.toFixed(2)} × ${framed.size.y.toFixed(2)} × ${framed.size.z.toFixed(2)}` : '',
+      fileSize: fmtSize(item.size),
+      ms: Math.round(performance.now() - t0)
+    });
+  } catch (e) {
+    console.error(e);
+    statsEl.style.display = 'none';
+    toast('加载失败：' + (e?.message || e) + '（Draco 压缩的 glb 需要带解码器；也可点侧栏右键用系统程序打开）');
+  }
+}
+
+function loadByExt(ext, url){
+  return new Promise((res, rej) => {
+    if (ext === 'glb' || ext === 'gltf') {
+      gltfLoader.load(url, g => res(g.scene), undefined, rej);
+    } else if (ext === 'obj') {
+      objLoader.load(url, o => {
+        const m = new THREE.MeshStandardMaterial({color:0xc9d4e2, metalness:0.15, roughness:0.65});
+        o.traverse(c => { if (c.isMesh) c.material = m; });
+        res(o);
+      }, undefined, rej);
+    } else if (ext === 'ply') {
+      plyLoader.load(url, g => {
+        g.computeVertexNormals();
+        const hasFace = !!g.index;
+        const mat = hasFace
+          ? new THREE.MeshStandardMaterial({color:0xb8c6d6, metalness:0.1, roughness:0.7, flatShading:false,
+              vertexColors: !!g.attributes.color})
+          : new THREE.PointsMaterial({color:0x9fe0c6, size:0.006, sizeAttenuation:true,
+              vertexColors: !!g.attributes.color});
+        res(hasFace ? new THREE.Mesh(g, mat) : new THREE.Points(g, mat));
+      }, undefined, rej);
+    } else if (ext === 'stl') {
+      stlLoader.load(url, g => {
+        g.computeVertexNormals();
+        res(new THREE.Mesh(g, new THREE.MeshStandardMaterial({color:0xc9d4e2, metalness:0.1, roughness:0.6})));
+      }, undefined, rej);
+    } else {
+      rej(new Error('暂不支持 .' + ext));
+    }
+  });
+}
+
+async function loadFile(file){
+  current = {name:file.name, file};
+  markSelected(null);
+  hintEl.style.display = 'none';
+  const t0 = performance.now();
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const url = URL.createObjectURL(file);
+  statsEl.style.display = 'block';
+  statsEl.innerHTML = `<span class="spin"></span> 正在加载 ${file.name}（${fmtSize(file.size)}）…`;
+  try {
+    const obj = await loadByExt(ext, url);
+    clearRoot(); root.add(obj);
+    applyMatFix(obj);
+    applyMatFix(obj);
+    const framed = frameObject(obj);
+    const st = countStats(obj);
+    showStats({...st, name:file.name}, {
+      size: framed ? `${framed.size.x.toFixed(2)} × ${framed.size.y.toFixed(2)} × ${framed.size.z.toFixed(2)}` : '',
+      fileSize: fmtSize(file.size), ms: Math.round(performance.now() - t0)
+    });
+  } catch(e){ console.error(e); statsEl.style.display='none'; toast('加载失败：' + (e?.message || e)); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 30000); }
+}
+
+/* ---------------- 列表 ---------------- */
+let items = [];
+const listEl = $('#list');
+
+function renderList(){
+  const q = $('#q').value.trim().toLowerCase();
+  const shown = items.filter(x => !q || x.name.toLowerCase().includes(q));
+  listEl.innerHTML = '';
+  if (!shown.length) { listEl.innerHTML = '<div style="padding:14px;color:#8b97a6;font-size:12.5px">没有匹配的 3D 文件</div>'; return; }
+  for (const it of shown) {
+    const d = document.createElement('div');
+    d.className = 'item'; d.dataset.path = it.path;
+    d.innerHTML = `<div class="n"><span class="tag ${it.ext.toLowerCase()}">${it.ext}</span><span>${it.name}</span></div>
+      <div class="m"><span>${fmtSize(it.size)}</span><span>${fmtTime(it.mtime)}</span><span>${it.rel}</span></div>`;
+    d.onclick = () => loadPath(it);
+    d.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      if (confirm(`用系统默认程序打开？\n${it.path}`)) fetch('/api/open?p=' + encodeURIComponent(it.path));
+    };
+    listEl.appendChild(d);
+  }
+}
+
+function markSelected(path){
+  document.querySelectorAll('.item').forEach(el => el.classList.toggle('sel', el.dataset.path === path));
+}
+
+async function refresh(){
+  try {
+    const r = await fetch('/api/list', {cache:'no-store'});
+    const j = await r.json();
+    items = j.items || [];
+    $('#roots').textContent = `已索引 ${items.length} 个 3D 资产`;
+    renderList();
+  } catch(e) { $('#roots').textContent = '扫描失败：' + e.message; }
+}
+
+/* ---------------- 交互 ---------------- */
+$('#refresh').onclick = refresh;
+$('#q').oninput = renderList;
+$('#btnWire').onclick = (e) => { const on = e.target.classList.toggle('on');
+  root.traverse(o => { if (o.isMesh) { const ms = Array.isArray(o.material)?o.material:[o.material];
+    ms.forEach(m => { if (m && 'wireframe' in m) m.wireframe = on; }); } }); };
+$('#btnGrid').onclick = (e) => { const on = !e.target.classList.contains('on');
+  e.target.classList.toggle('on', on); grid.visible = on; };
+$('#btnRot').onclick = (e) => { autoRot = !autoRot; e.target.classList.toggle('on', autoRot); };
+$('#btnReset').onclick = () => { if (root.children.length) frameObject(root.children[0]); };
+$('#btnBg').onclick = () => { bgIdx = (bgIdx+1) % BGS.length; scene.background = new THREE.Color(BGS[bgIdx]); };
+$('#btnFull').onclick = () => { document.fullscreenElement ? document.exitFullscreen() : main.requestFullscreen(); };
+$('#btnShot').onclick = () => {
+  renderer.render(scene, camera);
+  const a = document.createElement('a');
+  const base = (current?.name || 'screenshot').replace(/\.[^.]+$/, '');
+  a.download = base + '_' + Date.now() + '.png';
+  a.href = renderer.domElement.toDataURL('image/png');
+  a.click();
+};
+let autoRot = false;
+addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === 'r') $('#btnReset').click();
+  else if (k === 'w') $('#btnWire').click();
+  else if (k === 'g') $('#btnGrid').click();
+  else if (k === ' ') { e.preventDefault(); $('#btnRot').click(); }
+});
+
+// 拖拽
+let dragDepth = 0;
+addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('#drop').classList.add('on'); });
+addEventListener('dragleave', e => { e.preventDefault(); if (--dragDepth <= 0) $('#drop').classList.remove('on'); });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  e.preventDefault(); dragDepth = 0; $('#drop').classList.remove('on');
+  const f = e.dataTransfer?.files?.[0];
+  if (f) loadFile(f);
+});
+
+// 自适应
+addEventListener('resize', () => {
+  const w = main.clientWidth, h = main.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w/h; camera.updateProjectionMatrix();
+});
+
+// 渲染循环
+let last = performance.now();
+function tick(){
+  requestAnimationFrame(tick);
+  const now = performance.now(), dt = (now-last)/1000; last = now;
+  if (autoRot && root.children.length) root.rotation.y += dt * 0.6;
+  controls.update();
+  renderer.render(scene, camera);
+}
+tick();
+refresh();
+
+/* ---- ?p=<绝对路径> 直开（.glb 文件关联 / 从别的程序跳过来）---- */
+(() => {
+  const p = new URLSearchParams(location.search).get('p');
+  if (!p) return;
+  const name = p.split(/[\\/]/).pop();
+  const want = p.toLowerCase();
+  const go = () => {
+    const hit = (items || []).find(x => (x.path || '').toLowerCase() === want);
+    loadPath(hit || {name, path: p, rel: name, ext: (name.split('.').pop() || '').toUpperCase(),
+                     size: 0, mtime: Math.floor(Date.now() / 1000)});
+  };
+  // 等列表回来（能拿到真实大小/时间），最多等 2.5 秒
+  let tries = 0;
+  const wait = setInterval(() => {
+    if ((items && items.length) || ++tries > 25) { clearInterval(wait); go(); }
+  }, 100);
+})();
+
+/* ---- WebGL 上下文丢失时给人话提示 ---- */
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  toast('显卡上下文丢了（headless / 软件渲染 / 显存不足）。请用普通 Chrome 窗口打开，或换更小的模型。', 12000);
+});</script>
+</body>
+</html>
